@@ -3,44 +3,38 @@ import numpy as np
 # Methods for generating drug curves
 
 # Equation for a simple 1 compartment pharmacokinetic model
-def pharm_eqn(pop,t,k_elim=None,k_abs=None,max_dose=None):
+def pharm_eqn(pop,t,k_elim,k_abs,c_max):
     """One-compartment pharmacokinetic model
 
     Args:
         pop (population): Population class object
         t (float or int): time
         k_elim (float, optional): Elimination rate constant. If None,
-        gets data from population object. Defaults to None.
+        gets data from population object.
         k_abs (float, optional): Absorption rate constant. If None,
-        gets data from population object. Defaults to None.
+        gets data from population object.
         max_dose (float, optional): Max serum drug concentration. If None,
-        gets data from population object. Defaults to None.
+        gets data from population object.
 
     Returns:
         float: drug concentration according to pharmacokinetic model
     """
-    if k_elim is None:
-        k_elim = pop.k_elim
-    if k_abs is None:
-        k_abs = pop.k_abs
-    if max_dose is None:
-        max_dose = pop.max_dose
-    
+
     k_elim = k_elim*pop.timestep_scale
     k_abs = k_abs*pop.timestep_scale
     
     if k_elim == 0:
         conc = 1 - np.exp(-k_abs*t)
-        conc = conc*max_dose
+        conc = conc*c_max
     else:
         conc = np.exp(-k_elim*t)-np.exp(-k_abs*t) 
         t_max = np.log(k_elim/k_abs)/(k_elim-k_abs)
         conc = conc/(np.exp(-k_elim*t_max)-np.exp(-k_abs*t_max))
-        conc = conc*max_dose
+        conc = conc*c_max
     return conc
 
 # Convolve dose regimen u with pharmacokinetic model
-def convolve_pharm(pop,u):
+def convolve_pharm(pop,u,drug):
                    # k_elim=0.01,
                    # k_abs=0.1,
                    # max_dose=1):
@@ -56,13 +50,14 @@ def convolve_pharm(pop,u):
     Returns:
         numpy array: result of convolution
     """
-    k_elim = pop.k_elim
-    k_abs = pop.k_abs
-    max_dose = pop.max_dose
+    pk_df = pop.pk_library[pop.pk_library['drug']==drug]
+    k_elim = pk_df['k_elim'].values[0]
+    k_abs = pk_df['k_abs'].values[0]
+    c_max = pk_df['c_max'].values[0]
     
     pharm = np.zeros(pop.n_timestep)
     for i in range(pop.n_timestep):
-        pharm[i] = pop.pharm_eqn(i,k_elim=k_elim,k_abs=k_abs,max_dose=max_dose)
+        pharm[i] = pop.pharm_eqn(i,k_elim=k_elim,k_abs=k_abs,c_max=c_max)
     
     conv = np.convolve(u,pharm)
     conv = conv[0:pop.n_timestep]

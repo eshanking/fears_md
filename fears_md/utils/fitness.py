@@ -33,97 +33,86 @@ def gen_fitness_curves(pop,conc=None):
 
     return fc
 
-def pharmacodynamic_curve(c, gmax, gmin, mic, k):
-    """pharmacodynamic model adapted from Foerster et al.
+# def pharmacodynamic_curve(c, gmax, gmin, mic, k):
+#     """pharmacodynamic model adapted from Foerster et al.
 
+#     Foerster, S., Unemo, M., Hathaway, L.J. et al. Time-kill curve analysis and
+#     pharmacodynamic modelling for in vitro evaluation of antimicrobials against Neisseria
+#     gonorrhoeae . BMC Microbiol 16, 216 (2016). 
+#     https://doi.org/10.1186/s12866-016-0838-9
+
+#     Args:
+#         c (float): drug concentration
+#         gmax (float): max growth rate
+#         gmin (float): min growth rate
+#         mic (float): estimated minimum inhibitory concentration
+#         k (float): hill coefficient
+#     """
+
+#     if type(c) == np.ndarray or type(c) == list:
+#         g = []
+#         for c_t in c:
+#             if c_t == 0:
+#                 g.append(gmax)
+#             else:
+#                 g.append(gmax - (((gmax-gmin)*(c_t/mic)**k)/((c_t/mic)**k-(gmin/gmax))))
+#         return g
+    
+#     else:
+#         if c == 0:
+#             g = gmax
+#         else:
+#             g = gmax - (((gmax-gmin)*(c/mic)**k)/((c/mic)**k-(gmin/gmax)))
+#         return g
+
+def pharmacodynamic_curve(c, gmax, gmin, ic50, hc):
+    """pharmacodynamic model adapted from Foerster et al.
+    
     Foerster, S., Unemo, M., Hathaway, L.J. et al. Time-kill curve analysis and
     pharmacodynamic modelling for in vitro evaluation of antimicrobials against Neisseria
-    gonorrhoeae . BMC Microbiol 16, 216 (2016). 
+    gonorrhoeae . BMC Microbiol 16, 216 (2016).
     https://doi.org/10.1186/s12866-016-0838-9
 
     Args:
-        c (float): drug concentration
+        conc (float): drug concentration
         gmax (float): max growth rate
         gmin (float): min growth rate
-        mic (float): estimated minimum inhibitory concentration
-        k (float): hill coefficient
-    """
-
-    if type(c) == np.ndarray or type(c) == list:
-        g = []
-        for c_t in c:
-            if c_t == 0:
-                g.append(gmax)
-            else:
-                g.append(gmax - (((gmax-gmin)*(c_t/mic)**k)/((c_t/mic)**k-(gmin/gmax))))
-        return g
-    
-    else:
-        if c == 0:
-            g = gmax
-        else:
-            g = gmax - (((gmax-gmin)*(c/mic)**k)/((c/mic)**k-(gmin/gmax)))
-        return g
-
-# compute fitness given a drug concentration
-def gen_fitness(pop,genotype,conc,drugless_rate=None,ic50=None,hc=None,mic=None,
-                death_model=None):    
-    """Computes the fitness of a genotype at a given drug concentration.
-
-    Args:
-        pop (population class object): Population object containing data of interest
-        genotype (int): Genotype of interest
-        conc (float): drug concentration of interest
-        drugless_rate (float, optional): Drugless growth rate. 
-            If None, data is retrieved from population object. Defaults to None.
-        ic50 (float, optional): Genotype-specific IC50. 
-            If None, data is retrived from population object. Defaults to None.
-        hc (float, optional): Hill coefficient.
-            If None, data is retrived from population object. Defaults to None.
+        ic50 (float): estimated minimum inhibitory concentration
+        hc (float): hill coefficient
 
     Returns:
-        float: Growth rate computed from pharmacodynamic equation.
+        float: growth rate
     """
 
-    # if pop.seascape_lib is not None:
-    #     fitness = sl_to_fitness(pop,genotype,conc,hc=hc)
-    #     # fitness = fitness*(60**2)
-
-    if drugless_rate is None:
-        drugless_rate = pop.drugless_rates
-    if ic50 is None:
-        ic50 = pop.ic50
-    if mic is None:
-        mic = pop.mic
-    if death_model is None:
-        death_model = pop.death_model
-
-    if death_model == 'pharmacodynamic':
-
-        gmax = pop.seascape_lib[str(genotype)]['gmax']
-        gmin = pop.pharm_params['gmin']
-        k = pop.pharm_params['k']
-        mic = pop.seascape_lib[str(genotype)]['mic']
-
-        # g = pharmacodynamic_curve(conc,gmax,gmin,mic,k)
-
-        return pharmacodynamic_curve(conc,gmax,gmin,mic,k)
-    
+    if c == 0:
+        return gmax
     else:
+        if type(c) == int:
+            c = float(c) # numpy doesn't like ints raised to negative powers?
+        return gmax + ((gmin - 1) * c**hc) / (ic50**hc + c**hc)
 
-        # logistic equation from Ogbunugafor 2016
-        # conc = conc/10**6 # concentration in uM, convert to M
-        if hc is None:
-            c = -.6824968 # empirical curve fit
-        else:
-            c = hc
-        log_eqn = lambda d,i: d/(1+np.exp((i-np.log10(conc))/c))
-        if conc <= 0:
-            return drugless_rate[genotype]
-        else:
-            return log_eqn(drugless_rate[genotype],ic50[genotype])
 
-    # return fitness
+# compute fitness given a drug concentration
+def gen_fitness(pop,genotype,conc,drug):
+    """Generates the fitness of a genotype at a given drug concentration
+
+    Args:
+        pop (population class object): Population object
+        genotype (int): genotype
+        conc (float): drug concentration
+        drug (str): drug name
+
+    Returns:
+        float: fitness
+    """
+    drug_df = pop.pd_library[pop.pd_library['drug']==drug]
+    gmax = drug_df['gmax'][genotype]
+    gmin = drug_df['gmin'][genotype]
+    ic50 = drug_df['ic50'][genotype]
+    hc = drug_df['hc'][genotype]
+
+    return pharmacodynamic_curve(conc,gmax,gmin,ic50,hc)
+
 
 def logistic_equation(conc,drugless_rate,ic50,hc=-0.6824968):
     """

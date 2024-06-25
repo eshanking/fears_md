@@ -9,6 +9,7 @@ import math
 from importlib_resources import files
 from fears_md.utils import dir_manager, pharm, fitness, plotter, AutoRate
 import pandas as pd
+import os
 
 class PopParams:
     """Population parameters class
@@ -123,22 +124,31 @@ class PopParams:
         self.seascape_path = None
         self.seascape_lib = None
   
-        self.pharm_params_path = files('fears.data').joinpath('pharm_params_01172024.csv')
+        self.pharm_params_path = files('fears_md.data').joinpath('pharm_params_01172024.csv')
 
-        p = files('fears.data').joinpath('pyrimethamine_ic50.csv')
+        p = files('fears_md.data').joinpath('pyrimethamine_ic50.csv')
         self.ic50_data_path = str(p)
 
-        p = files('fears.data').joinpath('ogbunugafor_drugless.csv')
+        p = files('fears_md.data').joinpath('ogbunugafor_drugless.csv')
         self.drugless_data_path = str(p)
 
         plate_paths = ['20210929_plate1.csv','20210929_plate2.csv','20210929_plate3.csv']
-        plate_paths = [files('fears.data').joinpath(p) for p in plate_paths]
+        plate_paths = [files('fears_md.data').joinpath(p) for p in plate_paths]
         self.plate_paths = [str(p) for p in plate_paths]
         self.seascape_drug_conc = \
             [0,0.003,0.0179,0.1072,0.643,3.858,23.1481,138.8889,833.3333,5000] #ug/mL
         self.replicate_arrangement = 'rows'
         self.data_cols = [['B','C','D','E','F'],\
             ['B','C','D','E','F'],['B','C','D','E','F','G']]
+        
+        self.pharmacokinetics_file = files('fears_md.data').joinpath('pharmacokinetics_library.xlsx')
+        self.pharmacodynamics_file = files('fears_md.data').joinpath('pharmacodynamics_library.xlsx')
+        self.drug_list = None
+        self.pk_library = None
+        self.pd_library = None
+
+        self.drug_curve_dict = None # for storing multiple drug curves for different drugs
+        self.drug_impulse_dict = None
 
         min_dc = np.log10(self.seascape_drug_conc[1])
         max_dc = np.log10(max(self.seascape_drug_conc))
@@ -313,24 +323,73 @@ class Population(PopParams):
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
 
-        # initialize drug curve
-        self.drug_curve_dict = {} # for storing multiple drug curves for different drugs
-        self.drug_impulse_dict = {}
-        self.impulses = None
-        self.initialize_drug_curve()
+        self.load_drug_libraries()
 
-        # initialize fitness
-        self.initialize_fitness()
+        self.initialize_drug_curves()
 
-        # load pharmacodynamic parameters
-        # self.pharm_params = pd.read_csv(self.pharm_params_path).to_dict()
-        df = pd.read_csv(self.pharm_params_path)
-        self.pharm_params = {}
-        for key in df.keys():
-            self.pharm_params[key] = df[key][0]
+        self.initialize_population()
+    
+    def initialize_drug_curves(self):
+
+        if self.drug_curve_dict is None:
+            if self.drug_impulse_dict is None:
+                # pick the first drug and make an arbitrary dosing schedule
+                impulse_dict = {}
+                dc_dict = {}
+                drug_list = self.pk_library['drug'].unique()
+                drug = drug_list[0]
+                u = self.gen_impulses()
+                impulse_dict[drug] = u
+
+                dc = self.convolve_pharm(u,drug)
+                dc_dict[drug] = dc
+
+                for drug in drug_list[1:]:
+                    impulse_dict[drug] = np.zeros(len(u))
+                    dc_dict[drug] = np.zeros(len(dc))
+
+                self.drug_impulse_dict = impulse_dict
+                self.drug_curve_dict = dc_dict
+
+            else:
+                impulse_dict = self.drug_impulse_dict
+                dc_dict = {}
+                for drug in impulse_dict.keys():
+                    dc = self.convolve_pharm(impulse_dict[drug],drug)
+                    dc_dict[drug] = dc
+                
+                self.drug_curve_dict = dc_dict
+
+            # make sure the drugs in drug_curve_dict match the drugs in pk_library
+            pk_drugs = self.pk_library['drug'].unique()
+            dc_drugs = list(self.drug_curve_dict.keys())
+
+            if not set(pk_drugs) == set(dc_drugs):
+                raise Warning('Drug list mismatch between pharmacokinetic library and drug curve dictionary.')
+
+    def load_drug_libraries(self):
+
+        self.pk_library = pd.read_excel(self.pharmacokinetics_file)
+        self.pd_library = pd.read_excel(self.pharmacodynamics_file)
+
+        # check for drug list mismatch
+        if self.drug_list is not None:
+
+            pk_drugs = self.pk_library['drug'].unique()
+            pd_drugs = self.pd_library['drug'].unique()
+
+            if not set(pk_drugs) == set(pd_drugs):
+                raise Warning('Pharmacokinetic and pharmacodynamic drug lists do not match.')
+            if not set(pk_drugs) == set(self.drug_list):
+                print(self.drug_list)
+                raise Warning('Drug list mismatch between user input and library.')
+        else:
+            self.drug_list = self.pk_library['drug'].unique()
+
+    def initialize_population(self):
 
         if self.n_genotype is None:
-            self.n_genotype = int(len(self.ic50))
+            n_genotype = len(self.pd_library['genotype'].unique())
         if self.n_allele is None:
             self.n_allele = int(np.log2(self.n_genotype))
         if int(self.n_allele) != int(np.log2(self.n_genotype)):
@@ -349,98 +408,8 @@ class Population(PopParams):
                 self.init_counts*self.max_cells/sum(self.init_counts)
             self.init_counts = np.floor(self.init_counts)
             self.use_carrying_cap = False
-        
-    def initialize_fitness(self):
 
-        if self.ic50 is None and self.drugless_rates is None:
-
-            if self.fitness_data == 'two-point':
-                self.drugless_rates = \
-                    dir_manager.load_fitness(self.drugless_data_path)
-                self.ic50 = dir_manager.load_fitness(self.ic50_data_path)
-                self.data_source = 'default data'
             
-            elif self.fitness_data == 'estimate':
-                
-                # self.growth_rate_library = fitness.gen_growth_rate_library()
-                # self.seascape_library = fitness.gen_seascape_library()
-
-                f = str(files('fears.data').joinpath('plates'))
-                e = AutoRate.Experiment(f,drug_conc=self.seascape_drug_conc,
-                                        moat=self.moat,
-                                        replicate_arrangement=\
-                                            self.replicate_arrangement,
-                                        data_cols=self.data_cols,
-                                        hc_estimate=self.hc_estimate)
-                e.execute()
-                self.growth_rate_lib = e.growth_rate_lib
-                self.seascape_lib = e.seascape_lib
-
-                self.n_genotype = len(self.seascape_lib.keys())
-
-                self.ic50 = np.zeros(self.n_genotype)
-                self.drugless_rates = np.zeros(self.n_genotype)
-
-                i = 0
-
-                for key in self.seascape_lib.keys():
-                    self.ic50[i] = self.seascape_lib[key]['ic50']
-                    self.drugless_rates[i] = self.seascape_lib[key]['g_drugless']
-                    i+=1
-                    
-                self.growth_rate_lib['drug_conc'] = self.seascape_drug_conc
-                self.seascape_lib['drug_conc'] = self.seascape_drug_conc
-                self.autorate_exp = e
-            
-            elif self.fitness_data == 'random':
-
-                if self.n_allele is None:
-                    self.n_allele = 2
-                self.drugless_rates,self.ic50, = \
-                    fitness.gen_random_seascape(self)
-                self.n_genotype = 2**self.n_allele
-                self.data_source = 'random'
-
-            elif self.fitness_data == 'from_file':
-                if self.seascape_path is not None:
-                    if self.seascape_path.endswith('.csv'):
-                        self.seascape_lib = pd.read_csv(self.seascape_path,index_col=0)
-                    else:
-                        self.seascape_lib = pd.read_excel(self.seascape_path,index_col=0)
-                    self.data_source = self.seascape_path
-                else: # default data
-                    self.data_source = 'example data'
-                    self.seascape_path = \
-                        files('fears.data').joinpath('seascape_lib_09252023.csv')
-                    self.seascape_lib = pd.read_csv(self.seascape_path,index_col=0)
-                
-                self.n_genotype = len(self.seascape_lib.keys())
-
-                self.ic50 = np.zeros(self.n_genotype)
-                self.drugless_rates = np.zeros(self.n_genotype)
-
-                i = 0
-
-                for key in self.seascape_lib.keys():
-                    self.ic50[i] = self.seascape_lib[key]['ic50']
-                    self.drugless_rates[i] = self.seascape_lib[key]['g_drugless']
-                    i+=1 
-
-        else:
-            self.data_source = 'user-defined'
-
-        if self.null_seascape:
-            self.set_null_seascape(self.null_seascape_dose,self.null_seascape_method)
-            
-    def initialize_drug_curve(self,drug_list=None):
-        if drug_list is None:
-            drug_list = self.drug_list
-
-        for drug in drug_list:
-            curve,u = pharm.gen_curves(self,drug)
-            self.drug_curve_dict[drug] = curve
-            self.drug_impulse_dict[drug] = u
-
     ###########################################################################
     # ABM helper methods
     def gen_neighbors(self,genotype):
@@ -709,13 +678,13 @@ class Population(PopParams):
     ###########################################################################
     # Wrapper methods for generating drug concentration curves
 
-    def pharm_eqn(self,t,k_elim=None,k_abs=None,max_dose=None):
+    def pharm_eqn(self,t,k_elim=None,k_abs=None,c_max=None):
         conc = pharm.pharm_eqn(self,t,k_elim=k_elim,k_abs=k_abs,
-                               max_dose=max_dose)
+                               c_max=c_max)
         return conc
     
-    def convolve_pharm(self,u):
-        conv = pharm.convolve_pharm(self,u)
+    def convolve_pharm(self,u,drug):
+        conv = pharm.convolve_pharm(self,u,drug)
         return conv
     
     def gen_impulses(self):

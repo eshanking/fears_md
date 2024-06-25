@@ -9,7 +9,7 @@ setup(
     author_email = '',
     # packages=['autorate', "autorate.test", "autorate.test.data"], 
     # pacakges=['fears','fears.data','fears.utils'],
-    packages=find_packages(include=['fears','fears.population','fears.data','fears.utils','fears.utils.*']),
+    packages=find_packages(include=['fears_md','fears_md.population','fears_md.data','fears_md.utils','fears_md.utils.*']),
     # packages=find_packages(where="fears"),
     install_requires = [
       "pandas",
