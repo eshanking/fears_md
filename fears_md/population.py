@@ -330,8 +330,14 @@ class Population(PopParams):
         self.initialize_population()
     
     def initialize_drug_curves(self):
+        """Initializes drug concentration curves for the population object.
+        
+        Raises:
+            Warning: Drug list mismatch between pharmacokinetic library and drug curve
+                dictionary.
+        """
 
-        if self.drug_curve_dict is None:
+        if self.drug_curve_dict is None: # if no dict is provided to the object
             if self.drug_impulse_dict is None:
                 # pick the first drug and make an arbitrary dosing schedule
                 impulse_dict = {}
@@ -368,6 +374,8 @@ class Population(PopParams):
                 raise Warning('Drug list mismatch between pharmacokinetic library and drug curve dictionary.')
 
     def load_drug_libraries(self):
+        """Loads pharmacokinetic and pharmacodynamic libraries from excel files.
+        """
 
         self.pk_library = pd.read_excel(self.pharmacokinetics_file)
         self.pd_library = pd.read_excel(self.pharmacodynamics_file)
@@ -387,6 +395,8 @@ class Population(PopParams):
             self.drug_list = self.pk_library['drug'].unique()
 
     def initialize_population(self):
+        """Initializes population parameters and counts.
+        """
 
         if self.n_genotype is None:
             self.n_genotype = len(self.pd_library['genotype'].unique())
@@ -413,6 +423,20 @@ class Population(PopParams):
     ###########################################################################
     # ABM helper methods
     def gen_neighbors(self,genotype):
+        """
+        Generates all possible neighbors of a genotype.
+        
+        Parameters
+        ----------
+        genotype : int
+            Genotype to generate neighbors for.
+            
+        Returns
+        -------
+        neighbors : list
+            List of all possible neighbors of the genotype.
+        """
+
         mut = range(self.n_allele)
         neighbors = [genotype ^ (1 << m) for m in mut]
 
@@ -449,6 +473,20 @@ class Population(PopParams):
         return [int(x) for x in bin(offset+anInt)[3:]]
     
     def random_mutations(self,N):
+        """
+        Generates a mutation transition matrix. Mutations are allowed between gentoypes
+        with a Hamming distance of 1.
+        
+        Parameters
+        ----------
+        N : int
+            Number of genotypes in the model.
+            
+        Returns
+        -------
+        trans_mat : numpy array
+            Mutation transition matrix.
+        """
         trans_mat = np.zeros([N,N])
         for mm in range(N):
             for nn in range(N):
@@ -509,6 +547,20 @@ class Population(PopParams):
     # core evolutionary model
     
     def abm(self,mm,n_genotype,P,counts):
+        """
+        Core agent-based model for simulating evolution.
+        
+        Parameters
+        ----------
+        mm : int
+            Timestep.
+        n_genotype : int
+            Number of genotypes in the model.
+        P : numpy array
+            Mutation matrix (Hamming distance 1)
+        counts : numpy array
+            Matrix of simulated cell counts.
+            """
             
         # gen_fl_for_abm automatically considers carrying capacity, but
         # it does not consider timestep scale
@@ -588,6 +640,16 @@ class Population(PopParams):
         return counts_t
     
     def run_abm(self):
+        """
+        Run the agent-based model for a single simulation.
+        
+        Returns
+        -------
+        counts : numpy array
+            Matrix of simulated cell counts.
+        mm : int
+            Timestep at which the simulation stopped.
+        """
         
         n_genotype = self.n_genotype
         
@@ -625,6 +687,16 @@ class Population(PopParams):
         return counts, mm
     
     def simulate(self):
+        """
+        Run the agent-based model for n_sims simulations.
+        
+        Returns
+        -------
+        avg_counts : numpy array
+            Matrix of average cell counts over n_sims simulations.
+        fixation_time : list
+            List of timesteps at which the most frequent genotype is also the most fit genotype.
+            """
     
         # counts = np.zeros([self.n_timestep,self.n_genotype])
         avg_counts = np.zeros([self.n_timestep,self.n_genotype])
@@ -661,23 +733,6 @@ class Population(PopParams):
 
     ###########################################################################
     # wrapper methods for fitness
-
-    # def __gen_fl_for_abm(self,conc,counts):
-    #     """
-    #     Return the fitness landscape apropriately scaled according to the 
-    #     population size and carrying capacity
-
-    #     Parameters
-    #     ----------
-    #     conc (float) : drug concentration
-    #     counts (list) : vector of genotype population counts
-
-    #     Returns
-    #     ----------
-    #     fit_land (list) : scaled fitness landscape
-    #     """
-    #     fit_land = fitness.gen_fl_for_abm(self,conc,counts)
-    #     return fit_land
 
     def gen_fit_land(self,conc,**kwargs):
 
