@@ -154,13 +154,13 @@ class PopParams:
         max_dc = np.log10(max(self.seascape_drug_conc))
         self.drug_conc_range = [np.round(min_dc),np.round(max_dc)]
 
-        self.death_model = 'pharmacodynamic'
+        self.death_model = None
         self.death_model_k = 0.644 # empirical
         self.gmin = -10**8/36.34 # cells/hr
         self.mic = None
 
         self.constant_pop, self.use_carrying_cap = False, True
-        self.carrying_cap = 10**10
+        self.carrying_cap = 10**8
         self.growth_rate_norm = 1
         self.init_counts = None
         self.n_allele, self.n_genotype = None, None
@@ -389,7 +389,7 @@ class Population(PopParams):
     def initialize_population(self):
 
         if self.n_genotype is None:
-            n_genotype = len(self.pd_library['genotype'].unique())
+            self.n_genotype = len(self.pd_library['genotype'].unique())
         if self.n_allele is None:
             self.n_allele = int(np.log2(self.n_genotype))
         if int(self.n_allele) != int(np.log2(self.n_genotype)):
@@ -509,22 +509,15 @@ class Population(PopParams):
     # core evolutionary model
     
     def abm(self,mm,n_genotype,P,counts):
-        
-        conc = self.drug_curve[mm]
             
         # gen_fl_for_abm automatically considers carrying capacity, but
         # it does not consider timestep scale
 
-        fit_land = fitness.gen_fl_for_abm(self,conc,counts)
+        fit_land = fitness.gen_abm_fl_md(self,mm,counts)
         
         fit_land = fit_land*self.timestep_scale
         death_rate = self.death_rate*self.timestep_scale
         mut_rate = self.mut_rate*self.timestep_scale
-            
-        if self.debug and np.mod(mm,10) == 0:
-            print(str(mm))
-            print(str(counts))
-            print(str(fit_land))
          
         # Passage cells
         
@@ -537,19 +530,36 @@ class Population(PopParams):
             fit_land = np.abs(fit_land)
             delta_cells = np.random.poisson(counts_t*fit_land)
             delta_cells[negative_fitness] = -1*delta_cells[negative_fitness]
-            counts_t = counts_t + delta_cells
 
-        # else:
-        counts_t = counts_t - np.random.poisson(counts*death_rate) # background turnover
+            # dead cells from background turnover
+            dead_cells_turnover = -1*np.random.poisson(counts_t*death_rate)
+
+            dead_cells = np.copy(delta_cells)
+            dead_cells[dead_cells>0] = 0
+            dead_cells = dead_cells + dead_cells_turnover
+
+            counts_t = counts_t + dead_cells
+
+            daughter_counts = np.copy(delta_cells)
+            daughter_counts[daughter_counts<0] = 0
+
+        else:
+
+            counts_t = counts_t - np.random.poisson(counts*death_rate) # background turnover
         
+            daughter_counts = np.random.poisson(counts_t*fit_land)
+
+        if self.debug and np.mod(mm,10) == 0:
+            print(str(mm))
+            print(str(counts))
+            print(str(fit_land))
+            print(str(daughter_counts))
+            print(str(dead_cells))
+            print('\n')
+
         # Make sure there aren't negative numbers
-        
         neg_indx = counts_t < 0
         counts_t[neg_indx] = 0
-        
-        # Divide cells
-
-        daughter_counts = np.random.poisson(counts_t*fit_land)
         
         for genotype in np.arange(n_genotype):
             
@@ -616,7 +626,7 @@ class Population(PopParams):
     
     def simulate(self):
     
-        counts = np.zeros([self.n_timestep,self.n_genotype])
+        # counts = np.zeros([self.n_timestep,self.n_genotype])
         avg_counts = np.zeros([self.n_timestep,self.n_genotype])
         fixation_time = []
         
@@ -641,8 +651,8 @@ class Population(PopParams):
         fig = plotter.plot_timecourse(self,**kwargs)
         return fig
 
-    def plot_fitness_curves(self,**kwargs):
-        fig,ax = plotter.plot_fitness_curves(self,**kwargs)
+    def plot_fitness_curves(self,drug,**kwargs):
+        fig,ax = plotter.plot_fitness_curves(self,drug,**kwargs)
         return fig,ax
     
     def plot_landscape(self,**kwargs):

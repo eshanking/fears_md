@@ -89,7 +89,7 @@ def pharmacodynamic_curve(c, gmax, gmin, ic50, hc):
     else:
         if type(c) == int:
             c = float(c) # numpy doesn't like ints raised to negative powers?
-        return gmax + ((gmin - 1) * c**hc) / (ic50**hc + c**hc)
+        return gmax - ((gmax - gmin) * c**hc) / (ic50**hc + c**hc)
 
 
 # compute fitness given a drug concentration
@@ -105,13 +105,66 @@ def gen_fitness(pop,genotype,conc,drug):
     Returns:
         float: fitness
     """
+
     drug_df = pop.pd_library[pop.pd_library['drug']==drug]
-    gmax = drug_df['gmax'][genotype]
-    gmin = drug_df['gmin'][genotype]
-    ic50 = drug_df['ic50'][genotype]
-    hc = drug_df['hc'][genotype]
+    drug_df = drug_df[drug_df['genotype']==genotype]
+    # print(drug_df['gmax'].keys())
+    # gmax = drug_df['gmax'][genotype]
+    # gmin = drug_df['gmin'][genotype]
+    # ic50 = drug_df['ic50'][genotype]
+    # hc = drug_df['hc'][genotype]
+    gmax = drug_df['gmax'].values[0]
+    gmin = drug_df['gmin'].values[0]
+    ic50 = drug_df['ic50'].values[0]
+    hc = drug_df['hc'].values[0]
 
     return pharmacodynamic_curve(conc,gmax,gmin,ic50,hc)
+
+def gen_abm_fl_md(pop,mm,counts):
+    """Generates the fitness landscape for use in the abm method considering multiple drugs
+
+    Args:
+        pop (population class object): Population object
+        mm (float): timestep from ABM simulation
+        counts (array-like): list of population counts
+
+    Returns:
+        list: list of growth rates
+    """
+
+    # for each drug, get the fitness landscape.
+    # then, for each genotype, get the lowest fitness value.
+    # finally, scale by carrying capacity
+
+    # get the first fitness landscape to compare the others against
+
+    drug = pop.drug_list[0]
+
+    dc = pop.drug_curve_dict[drug][mm]
+
+    fit_land = gen_fit_land(pop,dc,drug)
+
+    for d in pop.drug_list[1:]:
+        dc = pop.drug_curve_dict[d][mm]
+        fit_land_d = gen_fit_land(pop,dc,d)
+        fit_land = np.minimum(fit_land,fit_land_d)
+
+    pos_indx = np.argwhere(fit_land>0)
+    
+    # Scale division rates based on carrying capacity
+    if type(counts) == list:
+        counts = np.array(counts)
+
+    if pop.use_carrying_cap:
+        division_scale = 1-np.sum(counts)/pop.carrying_cap
+        if counts.sum()>pop.carrying_cap:
+            division_scale = 0
+    else:
+        division_scale = 1
+    
+    fit_land[pos_indx] = fit_land[pos_indx]*division_scale
+    
+    return fit_land
 
 
 def logistic_equation(conc,drugless_rate,ic50,hc=-0.6824968):
@@ -215,7 +268,7 @@ def gen_digital_seascape(pop,conc,gen,min_fitness=0.0):
         fitness = pop.drugless_rates[gen]
     return fitness
 
-def gen_fit_land(pop,conc,mode=None,**kwargs):
+def gen_fit_land(pop,conc,drug):
     """Generates the fitness landscape at a given drug concentration
 
     Args:
@@ -229,19 +282,8 @@ def gen_fit_land(pop,conc,mode=None,**kwargs):
 
     fit_land = np.zeros(pop.n_genotype)
             
-    if pop.fitness_data == 'manual' or mode=='manual':
-        fit_land = pop.landscape_data/pop.growth_rate_norm
-
-    else:
-            
-        if pop.digital_seascape:
-            for kk in range(pop.n_genotype):
-                fit_land[kk] = gen_digital_seascape(pop, conc, kk)
-            
-        else:
-            for kk in range(pop.n_genotype):
-                fit_land[kk] = gen_fitness(pop,kk,
-                                           conc,**kwargs)/pop.growth_rate_norm
+    for gen in range(pop.n_genotype):
+        fit_land[gen] = gen_fitness(pop,gen,conc,drug)
     
     return fit_land
 

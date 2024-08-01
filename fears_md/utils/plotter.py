@@ -90,36 +90,6 @@ def plot_timecourse(pop,counts_t=None,title_t=None,**kwargs):
     cc = gen_color_cycler()
     
     ax1.set_prop_cycle(cc)
-
-    color = [0.5,0.5,0.5]
-    
-    if pop.plot_drug_curve:
-        ax2 = ax1.twinx() # ax2 is the drug timecourse
-        ax2.set_position([left, 0.5, width, 0.6])
-        ax2.set_ylabel('Drug Concentration \n($\u03BC$M)', color=color,fontsize=14) # we already handled the x-label with ax1
-        
-        drug_curve = pop.drug_curve
-        
-        ax2.plot(drug_curve, color='black', linewidth=2.0)
-        ax2.tick_params(axis='y', labelcolor=color)
-        
-        if pop.drug_log_scale:
-            ax2.set_yscale('log')
-            if min(drug_curve) <= 0:
-                axmin = 10**-3
-            else:
-                axmin = min(drug_curve)
-            ax2.set_ylim(axmin,2*max(drug_curve))
-            ax2.legend(['Drug Conc.'],loc=(1.3,0.93),frameon=False,fontsize=12)
-            
-        else:
-            ax2.set_ylim(0,1.1*max(drug_curve))
-            ax2.legend(['Drug Conc.'],loc=(1.25,0.93),frameon=False,fontsize=12)
-
-            
-        ax2.tick_params(labelsize=12)
-        ax2.axes.ticklabel_format(axis='y',style='sci',scilimits=(1,10))
-        ax2.set_title(title,fontsize=14)
         
     for allele in range(counts.shape[1]):
         if allele in sorted_index_big:
@@ -175,6 +145,7 @@ def plot_timecourse(pop,counts_t=None,title_t=None,**kwargs):
     return fig
 
 def plot_fitness_curves(pop,
+                        drug,
                         fig_title='',
                         plot_r0 = False,
                         fig=None,
@@ -193,6 +164,7 @@ def plot_fitness_curves(pop,
 
     Args:
         pop (population): Population class object
+        drug (string): Plot dose-response curves for this drug.
         fig_title (str, optional): Figure title. Defaults to ''.
         plot_r0 (bool, optional): If true, subtracts death rate from fitness. 
         Defaults to False.
@@ -280,7 +252,7 @@ def plot_fitness_curves(pop,
         fit = np.zeros((pop.n_genotype,conc.shape[0]))
         
         for j in range(conc.shape[0]):
-            fit[:,j] = fitness.gen_fit_land(pop,conc[j])
+            fit[:,j] = fitness.gen_fit_land(pop,conc[j],drug)
         
         if plot_r0:
             fit = fit-pop.death_rate
